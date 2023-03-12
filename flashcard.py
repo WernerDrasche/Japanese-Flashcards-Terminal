@@ -253,12 +253,13 @@ class Word:
         else:
             furigana = data["furigana"]
         w = Word(word, furigana)
-        if exact_match:
-            w.display("Adding @")
-        else:
-            w.display("Do you want to add @? ")
-            if (not prompt()):
-                return -1
+        w.display("Adding @")
+#       if exact_match:
+#           w.display("Adding @")
+#       else:
+#           w.display("Do you want to add @? ")
+#           if (not prompt()):
+#               return -1
         if not data:
             meanings = result.find_all("span", attrs={"class": "meaning-meaning"})
             meanings = split_and_strip(";".join(map(BeautifulSoup.get_text, meanings)), ";")
