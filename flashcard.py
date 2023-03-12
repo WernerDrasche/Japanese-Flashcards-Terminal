@@ -692,6 +692,7 @@ def select_word_lists(all_word_list_names, ctx):
         idx -= 6
         if idx == 0:
             word_lists.append(ctx.single_kanji_word_lists[HIGH])
+            continue
         idx -= 1
         if idx < 5:
             word_lists.append(ctx.single_kanji_word_lists[LEVEL+idx])
