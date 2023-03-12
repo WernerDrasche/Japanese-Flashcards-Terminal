@@ -12,13 +12,13 @@ How to get japanese input to work on OpenBSD (this worked for me):
 - install japanese fonts
 - install fcitx, fcitx-anthy, fcitx-configtool-qt and kasumi
 - put this into .xsession:
-    export XMODIFIERS=@im=fcitx
-    export GTK_IM_MODULE=fcitx
-    export QT_IM_MODULE=fcitx
-    ...
-    exec dbus-launch i3
+        export XMODIFIERS=@im=fcitx
+        export GTK_IM_MODULE=fcitx
+        export QT_IM_MODULE=fcitx
+        ...
+        exec dbus-launch i3
 - autostart fcitx5 (I put it in i3config):
-    exec --no-startup-id fcitx5 -rd
+        exec --no-startup-id fcitx5 -rd
 - configure with configtool to use anthy
 
 Actions:
