@@ -108,6 +108,7 @@ class Context:
         self.word_list_names = HoleList(["jlpt n" + str(i) for i in range(1, 6)])
         self.single_kanji_word_lists = tuple([set() for _ in range(14)])
         self.slots = tuple([set() for _ in range(6)])
+        self.invalid = set()
 
     def write_to_file(self, path):
         with shelve.open(path) as db:
@@ -124,12 +125,25 @@ class Context:
             self.word_list_names = ctx.word_list_names
             self.single_kanji_word_lists = ctx.single_kanji_word_lists
             self.slots = ctx.slots
+            try:
+                self.invalid = ctx.invalid
+            except:
+                self.invalid = set()
+
+ENDLESS_RADICAL_PAIRS = {
+        '口': '囗',
+        '囗': '口',
+        '母': '毋',
+        '毋': '母',
+        }
 
 class Kanji:
-    def __init__(self, char, meanings, categories):
+    def __init__(self, char, meanings, categories, parts, radical):
         self.char = char
         self.meanings = meanings
         self.categories = categories
+        self.parts = parts
+        self.radical = radical
 
     # this does not prevent duplicates
     def scrape(char, ctx):
@@ -148,7 +162,7 @@ class Kanji:
         category = False
         categories = set()
         grade = parsed.body.find("div", attrs={"class": "grade"})
-        if grade:
+        if grade and not grade.text.isspace():
             words = split_and_strip(grade.text, " ")
             if words[0] == "Jōyō":
                 categories.add(JOYO)
@@ -165,15 +179,41 @@ class Kanji:
             category = True
         if not category:
             categories.add(OTHER)
-        k = Kanji(char, meanings, categories)
+        radical_info = parsed.body.find_all("div", attrs={"class": "radicals"})
+        radicals = list(map(BeautifulSoup.get_text, radical_info[1].find_all("a")))
+        if char in ENDLESS_RADICAL_PAIRS:
+            radicals.remove(ENDLESS_RADICAL_PAIRS[char])
+        parts = []
+        for radical in radicals:
+            if radical == char:
+                continue
+            k_idx = ctx.kanji_idx_by_symbol.get(radical)
+            if k_idx is None:
+                k_idx = Kanji.scrape(radical, ctx)
+            if k_idx == -1:
+                ctx.kanji_idx_by_symbol[radical] = -1
+            else:
+                parts.append(k_idx)
+        trimmed = parts
+        for k_idx_o in parts:
+            k_o = ctx.kanjis[k_idx_o]
+            for k_idx_i in parts:
+                k_i = ctx.kanjis[k_idx_i]
+                if k_idx_o in k_i.parts:
+                    trimmed.remove(k_idx_o)
+                    break
+        parts = trimmed
+        radical = re.sub("\(.*\)", "", radical_info[0].text).strip()[-1]
+        k = Kanji(char, meanings, categories, parts, radical)
         idx = len(ctx.kanjis)
         ctx.kanjis.append(k)
         ctx.kanji_idx_by_symbol[char] = idx
         return idx
 
-    def display_with_meaning(self):
+    def display_with_meaning(self, radical_ctl=True):
         meanings = ", ".join(self.meanings)
-        print(f"{self.char}: {meanings}")
+        is_radical = " (radical)" if radical_ctl and self.char == self.radical else ""
+        print(f"{self.char}{is_radical}: {meanings}")
 
     def display_categories(self):
         cat_names = []
@@ -187,6 +227,11 @@ class Kanji:
             elif c >= LEVEL and c < LEVEL + 5:
                 cat_names.insert(2, f"jlpt n{c-LEVEL+1}")
         print(", ".join(cat_names))
+
+    def display_parts(self, ctx):
+        for k_idx in self.parts:
+            k = ctx.kanjis[k_idx]
+            k.display_with_meaning(k.char == self.radical)
 
 class Word:
     # does not prevent duplicates
@@ -226,7 +271,12 @@ class Word:
             self.lower += ' ' * diff * 2
 
     def scrape(word, ctx, exact_match=True, single_kanji=False, data=None):
-        if not data:
+        w_data = None
+        if data:
+            w_data = data.get(word)
+            if not w_data:
+                data = None
+        if not w_data:
             response = requests.get(BASE_URL + word)
             if response.status_code != 200:
                 print(f"Error: could not get data for word {word}")
@@ -248,10 +298,23 @@ class Word:
                     return add_word_manual(word, ctx)
                 return -1
             furigana = result.find("span", attrs={"class": "furigana"})
-            furigana = list(filter(lambda s: not s.isspace() and s,
-                map(BeautifulSoup.get_text, furigana)))
+            singles = furigana.find("rt")
+            if singles:
+                furigana = list(singles.text)
+            else:
+                furigana = list(filter(lambda s: not s.isspace() and s,
+                    map(BeautifulSoup.get_text, furigana)))
+            word = text
         else:
-            furigana = data["furigana"]
+            furigana = w_data["furigana"]
+        kanji_positions = []
+        for i in range(len(word)):
+            char = word[i]
+            if not is_kana(char):
+                kanji_positions.append(i)
+        if single_kanji and len(kanji_positions) != 1:
+            #print("Error: this is not a single word kanji")
+            return -1
         w = Word(word, furigana)
         w.display("Adding @")
 #       if exact_match:
@@ -260,15 +323,16 @@ class Word:
 #           w.display("Do you want to add @? ")
 #           if (not prompt()):
 #               return -1
-        if not data:
+        if not w_data:
             meanings = result.find_all("span", attrs={"class": "meaning-meaning"})
             meanings = split_and_strip(";".join(map(BeautifulSoup.get_text, meanings)), ";")
             w.meanings = choose_options(meanings, "Choose meanings")
             if w.meanings is None:
                 return -1
         else:
-            w.meanings = data["meanings"]
-        for char in word:
+            w.meanings = w_data["meanings"]
+        for i in kanji_positions:
+            char = word[i]
             if not is_kana(char):
                 k_idx = ctx.kanji_idx_by_symbol.get(char)
                 if k_idx is None: 
@@ -276,18 +340,15 @@ class Word:
                     if k_idx == -1:
                         return -1
                 w.kanji_index.append(k_idx)
-        if single_kanji and len(w.kanji_index) != 1:
-            print("Error: this is not a single word kanji")
-            return -1
         idx = ctx.words.add(w)
         ctx.word_idx_by_symbols[word] = idx
         ctx.slots[0].add(idx)
-        if not data:
+        if not w_data:
             jlpt = result.find("span", attrs={"class": "concept_light-tag label"})
         else:
-            jlpt = data["level"]
+            jlpt = w_data["level"]
         if jlpt:
-            if not data:
+            if not w_data:
                 jlpt = jlpt.text.strip()
             if "JLPT" in jlpt:
                 level = jlpt[-1]
@@ -310,7 +371,12 @@ class Word:
                     if i == w.kanji_index[0]:
                         break
                 else:
-                    Word.scrape(ctx.kanjis[i].char, ctx, exact_match=False, single_kanji=True)
+                    Word.scrape(
+                            ctx.kanjis[i].char,
+                            ctx,
+                            exact_match=False,
+                            single_kanji=True,
+                            data=data)
         return idx
 
     def display(self, surrounding="@"):
@@ -337,6 +403,9 @@ class Word:
                 k.display_with_meaning()
         if len(self.kanji_index) == 1:
             k = ctx.kanjis[self.kanji_index[0]]
+            if k.parts:
+                print("Parts:")
+            k.display_parts(ctx)
             if OTHER not in k.categories:
                 print("Categories: ", end="")
                 k.display_categories()
@@ -345,23 +414,23 @@ class Word:
             self.display_word_lists(ctx)
 
 def json_to_word_data(j, ctx):
-    data = {}
+    word_data = {}
     furigana = list(map(str.strip, filter(lambda s: not s.isspace() and s, j["furigana"])))
 #   if not furigana:
 #       print("Error: furigana field is empty")
 #       return None
-    data["furigana"] = furigana
+    word_data["furigana"] = furigana
     meanings = list(map(str.strip, filter(lambda s: not s.isspace() and s, j["meanings"])))
     if not meanings:
         print("Error: meanings field is empty")
         return None
-    data["meanings"] = meanings
+    word_data["meanings"] = meanings
     level = j["jlpt n"]
     if level < 0 or 5 < level:
         print(f"Error: invalid jlpt level {level}")
         return None
-    data["level"] = "JLPT n" + str(level) if level != 0 else ""
-    return data
+    word_data["level"] = "JLPT n" + str(level) if level != 0 else ""
+    return word_data
 
 TEMPLATE = {
         "furigana": [""],
@@ -380,13 +449,14 @@ def add_word_manual(word, ctx):
         s = str(f.read())
         f.close()
         j = json.loads(s)
-        data = json_to_word_data(j, ctx)
+        word_data = json_to_word_data(j, ctx)
         if not data:
             print("Do you want to adjust the data?")
             if prompt():
                 continue
             return
         break
+    data = {word: word_data}
     return Word.scrape(word, ctx, data=data)
 
 def add_words(ctx):
@@ -565,6 +635,7 @@ def edit_words(ctx, sel=None, idx=-1):
             print("Are you sure?")
             if not prompt():
                 continue
+            ctx.invalid.add(idx)
             word_lists = sel.word_lists
             for i in word_lists:
                 l = ctx.word_lists[ctx.word_list_names[i]]
@@ -579,6 +650,7 @@ def edit_words(ctx, sel=None, idx=-1):
             l.discard(idx)
             del ctx.words[idx]
             del ctx.word_idx_by_symbols[sel.word]
+            sel = None
         elif word == 'm' or word == "meaning":
             if not sel:
                 print("Error: nothing selected")
@@ -738,6 +810,7 @@ def review_words(ctx):
     with shelve.open("flashcards") as db:
         incorrect = db.get("incorrect")
         if incorrect is None:
+            ctx.invalid.clear()
             word_list = select_words(ctx)
             if not word_list:
                 return
@@ -753,10 +826,12 @@ def review_words(ctx):
             clear()
             c_idx = random.randrange(len(incorrect))
             card = incorrect[c_idx]
-            if card[0] >= len(ctx.words.data) or not ctx.words[card[0]]:
+            w_idx = card[0]
+            if w_idx in ctx.invalid:
                 del incorrect[c_idx]
+                ctx.invalid.discard(w_idx)
                 continue
-            w = ctx.words[card[0]]
+            w = ctx.words[w_idx]
             print(w.word)
             usr = input("[Check] ").strip().lower()
             if usr == 'b' or usr == "back":
@@ -787,20 +862,47 @@ def review_words(ctx):
         for card in correct:
             if card[1] == 1:
                 continue
-            w = ctx.words[card[0]]
+            w = ctx.words[w_idx]
             if card[1] >= 2:
                 if w.slot > 0:
-                    ctx.slots[w.slot].discard(card[0])
+                    ctx.slots[w.slot].discard(w_idx)
                     w.slot -= 1
-                    ctx.slots[w.slot].add(card[0])
+                    ctx.slots[w.slot].add(w_idx)
             elif w.slot < len(ctx.slots):
-                ctx.slots[w.slot].discard(card[0])
+                ctx.slots[w.slot].discard(w_idx)
                 w.slot += 1
-                ctx.slots[w.slot].add(card[0])
+                ctx.slots[w.slot].add(w_idx)
+    ctx.invalid.clear()
     with shelve.open("flashcards") as db:
         db["incorrect"] = None
         db["correct"] = None
         db["stash"] = None
+
+def export_words(ctx):
+    data = {}
+    for w in ctx.words:
+        w_data = {}
+        w_data["furigana"] = w.furigana
+        w_data["meanings"] = w.meanings
+        level = list(filter(lambda l: l < NUM_RESERVED_WORD_LISTS, w.word_lists))
+        level = level[0] + 1 if level else 0
+        w_data["level"] = "JLPT n" + str(level) if level else ""
+        data[w.word] = w_data
+    with open("words.json", "w+") as f:
+        json.dump(data, f)
+
+def import_words(ctx):
+    try:
+        with open("words.json", "r") as f:
+            data = json.load(f)
+    except:
+        print("Error: could not open words.json")
+    for word, w_data in data.items():
+        w_idx = ctx.word_idx_by_symbols.get(word)
+        if w_idx is not None:
+            print(f"Already added {word} -> skipping")
+            continue
+        Word.scrape(word, ctx, data=data)
 
 def main():
     ctx = Context()
@@ -811,7 +913,6 @@ def main():
         print("Warning: could not read from flashcards.db")
         print("Warning: if you don't want to lose everything when exiting, kill the program")
         ctx.init_empty()
-        #return
     #print(ctx.word_idx_by_symbols)
     abort = False
     while True:
@@ -832,6 +933,12 @@ def main():
         elif choice == "write":
             print("Saving changes...")
             ctx.write_to_file("flashcards")
+        elif choice == "export":
+            print("Exporting words to file words.json...")
+            export_words(ctx)
+        elif choice == "import":
+            print("Importing words from words.json...")
+            import_words(ctx)
         else:
             print(f"Error: invalid action {choice}")
     if not abort:
