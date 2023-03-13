@@ -194,9 +194,8 @@ class Kanji:
                 ctx.kanji_idx_by_symbol[radical] = -1
             else:
                 parts.append(k_idx)
-        trimmed = parts
+        trimmed = parts.copy()
         for k_idx_o in parts:
-            k_o = ctx.kanjis[k_idx_o]
             for k_idx_i in parts:
                 k_i = ctx.kanjis[k_idx_i]
                 if k_idx_o in k_i.parts:
@@ -210,7 +209,7 @@ class Kanji:
         ctx.kanji_idx_by_symbol[char] = idx
         return idx
 
-    def display_with_meaning(self, radical_ctl=True):
+    def display_with_meaning(self, radical_ctl=False):
         meanings = ", ".join(self.meanings)
         is_radical = " (radical)" if radical_ctl and self.char == self.radical else ""
         print(f"{self.char}{is_radical}: {meanings}")
@@ -313,7 +312,6 @@ class Word:
             if not is_kana(char):
                 kanji_positions.append(i)
         if single_kanji and len(kanji_positions) != 1:
-            #print("Error: this is not a single word kanji")
             return -1
         w = Word(word, furigana)
         w.display("Adding @")
@@ -396,12 +394,13 @@ class Word:
         print("Meaning:")
         for meaning in self.meanings:
             print(f"• {meaning}")
+        is_single_kanji_word = len(self.kanji_index) == 1
         if len(self.kanji_index) != 0:
             print("Kanji:")
             for k_idx in self.kanji_index:
                 k = ctx.kanjis[k_idx]
-                k.display_with_meaning()
-        if len(self.kanji_index) == 1:
+                k.display_with_meaning(radical_ctl=is_single_kanji_word)
+        if is_single_kanji_word:
             k = ctx.kanjis[self.kanji_index[0]]
             if k.parts:
                 print("Parts:")
@@ -414,23 +413,20 @@ class Word:
             self.display_word_lists(ctx)
 
 def json_to_word_data(j, ctx):
-    word_data = {}
+    w_data = {}
     furigana = list(map(str.strip, filter(lambda s: not s.isspace() and s, j["furigana"])))
-#   if not furigana:
-#       print("Error: furigana field is empty")
-#       return None
-    word_data["furigana"] = furigana
+    w_data["furigana"] = furigana
     meanings = list(map(str.strip, filter(lambda s: not s.isspace() and s, j["meanings"])))
     if not meanings:
         print("Error: meanings field is empty")
         return None
-    word_data["meanings"] = meanings
+    w_data["meanings"] = meanings
     level = j["jlpt n"]
     if level < 0 or 5 < level:
         print(f"Error: invalid jlpt level {level}")
         return None
-    word_data["level"] = "JLPT n" + str(level) if level != 0 else ""
-    return word_data
+    w_data["level"] = "JLPT n" + str(level) if level != 0 else ""
+    return w_data
 
 TEMPLATE = {
         "furigana": [""],
@@ -441,7 +437,6 @@ TEMPLATE = {
 def add_word_manual(word, ctx):
     f = open("tmp.json", "w+")
     json.dump(TEMPLATE, f, indent=4)
-    #f.flush()
     f.close()
     while True:
         os.system(f"{EDITOR} tmp.json")
@@ -449,14 +444,14 @@ def add_word_manual(word, ctx):
         s = str(f.read())
         f.close()
         j = json.loads(s)
-        word_data = json_to_word_data(j, ctx)
-        if not data:
+        w_data = json_to_word_data(j, ctx)
+        if not w_data:
             print("Do you want to adjust the data?")
             if prompt():
                 continue
             return
         break
-    data = {word: word_data}
+    data = {word: w_data}
     return Word.scrape(word, ctx, data=data)
 
 def add_words(ctx):
@@ -498,7 +493,6 @@ def parse_edit_cmd(cmd, lst):
     n = int(n) - 1
     return action, n
 
-# epic code duplication
 def edit_word_lists(ctx):
     updated = True
     while True:
@@ -909,11 +903,9 @@ def main():
     try: 
         ctx.read_from_file("flashcards")
     except Exception as e: 
-        #print(e)
         print("Warning: could not read from flashcards.db")
         print("Warning: if you don't want to lose everything when exiting, kill the program")
         ctx.init_empty()
-    #print(ctx.word_idx_by_symbols)
     abort = False
     while True:
         choice = input("Action: ").strip().lower()
