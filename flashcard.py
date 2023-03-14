@@ -90,6 +90,13 @@ def choose_options(lst, msg="Choose options", empty_is_first=True, output=True):
         continue
     return [lst[i] for i in range(len(lst)) if i in choices]
 
+def display_selected(word):
+    clear()
+    if not word:
+        print("Nothing selected")
+    else:
+        word.display("Selected @")
+
 JOYO = 0
 GRADE = 1
 HIGH = 7
@@ -125,10 +132,7 @@ class Context:
             self.word_list_names = ctx.word_list_names
             self.single_kanji_word_lists = ctx.single_kanji_word_lists
             self.slots = ctx.slots
-            try:
-                self.invalid = ctx.invalid
-            except:
-                self.invalid = set()
+            self.invalid = ctx.invalid
 
 ENDLESS_RADICAL_PAIRS = {
         '口': '囗',
@@ -458,6 +462,7 @@ def add_words(ctx):
     manual = False
     sel = None
     idx = -1
+    clear()
     while True:
         word = input("Add: ").strip().lower()
         if word == 'b' or word == "back":
@@ -478,6 +483,7 @@ def add_words(ctx):
             w = ctx.words[w_idx]
             w.display("Already added @")
             continue
+        clear()
         idx = Word.scrape(word, ctx) if not manual else add_word_manual(word, ctx)
         sel = ctx.words[idx] if idx != -1 else None
 
@@ -497,11 +503,15 @@ def edit_word_lists(ctx):
     updated = True
     while True:
         if updated:
+            clear()
+            print("Edit word lists:")
             names = list(ctx.word_list_names)[NUM_RESERVED_WORD_LISTS:]
             for i in range(len(names)):
                 print(f"{i+1}. {names[i]}")
             updated = False
         cmd = input("Command: ").strip().lower()
+        if not cmd:
+            continue
         if cmd == 'b' or cmd == "back":
             return
         if cmd == 'a' or cmd == "add":
@@ -555,13 +565,15 @@ def add_to_word_lists(word, w_idx, ctx):
     names = list(ctx.word_list_names)[NUM_RESERVED_WORD_LISTS:]
     minus = list(map(lambda i: ctx.word_list_names[i], word.word_lists))
     names = list(filter(lambda n: n not in minus, names))
+    display_selected(word)
     while True:
         if not names:
             print(f"{word.word} is member of all user generated word lists")
-            return
+            return -1
         choices = choose_word_lists_wrapper(names)
         if not choices:
             return
+        display_selected(word)
         for name in choices:
             n_idx = ctx.word_list_names.index(name)
             print(f"Adding {word.word} to word list {name}")
@@ -570,14 +582,16 @@ def add_to_word_lists(word, w_idx, ctx):
             names.remove(name)
 
 def remove_from_word_lists(word, w_idx, ctx):
-    names = list(map(lambda i: ctx.word_list_names[i], word.word_list))
+    names = list(ctx.word_list_names)[NUM_RESERVED_WORD_LISTS:]
+    display_selected(word)
     while True:
         if not names:
             print(f"{word.word} is not in any user generated word list")
-            return
-        choices = choose_word_lists_wrapper()
+            return -1
+        choices = choose_word_lists_wrapper(names)
         if not choices:
             return
+        display_selected(word)
         for name in choices:
             n_idx = ctx.word_list_names.index(name)
             print(f"Removing {word.word} from word list {name}")
@@ -589,6 +603,7 @@ def edit_meaning(word):
     updated = True
     while True:
         if updated:
+            display_selected(word)
             for i in range(len(word.meanings)):
                 print(f"{i+1}. {word.meanings[i]}")
             updated = False
@@ -618,13 +633,15 @@ def edit_meaning(word):
         updated = True
 
 def edit_words(ctx, sel=None, idx=-1):
+    display_selected(sel)
     while True:
         word = input("Edit: ").strip().lower()
+        if not word:
+            continue
         if word == 'b' or word == "back":
             break
         elif word == 'd' or word == "delete":
             if not sel:
-                print("Error: nothing selected")
                 continue
             print("Are you sure?")
             if not prompt():
@@ -647,32 +664,33 @@ def edit_words(ctx, sel=None, idx=-1):
             sel = None
         elif word == 'm' or word == "meaning":
             if not sel:
-                print("Error: nothing selected")
                 continue
             edit_meaning(sel)
         elif word == 'i' or word == "info":
             if not sel:
-                print("Error: nothing selected")
                 continue
+            display_selected(sel)
             sel.display_full(ctx)
+            continue
         elif word == 'a' or word == "add":
             if not sel:
-                print("Error: nothing selected")
                 continue
-            add_to_word_lists(sel, idx, ctx)
+            if add_to_word_lists(sel, idx, ctx) == -1:
+                continue
         elif word == 'r' or word == "remove":
             if not sel:
-                print("Error: nothing selected")
                 continue
-            remove_from_word_lists(sel, idx, ctx)
+            if remove_from_word_lists(sel, idx, ctx) == -1:
+                continue
         else:
             w_idx = ctx.word_idx_by_symbols.get(word)
             if w_idx is not None:
                 sel = ctx.words[w_idx]
                 idx = w_idx
-                sel.display("Selected @")
             else:
                 print(f"Could not find {word}")
+                continue
+        display_selected(sel)
 
 def enumerate_all_word_lists(ctx):
     all_word_list_names = []
@@ -773,6 +791,7 @@ def select_word_lists(all_word_list_names, ctx):
     return word_lists
 
 def select_words(ctx):
+    clear()
     all_word_list_names = enumerate_all_word_lists(ctx)
     words = set()
     while True:
@@ -854,15 +873,17 @@ def review_words(ctx):
         incorrect, correct = correct, incorrect
     if not abort:
         for card in correct:
-            if card[1] == 1:
+            wrong = card[1]
+            if wrong == 1:
                 continue
+            w_idx = card[0]
             w = ctx.words[w_idx]
-            if card[1] >= 2:
+            if wrong >= 2:
                 if w.slot > 0:
                     ctx.slots[w.slot].discard(w_idx)
                     w.slot -= 1
                     ctx.slots[w.slot].add(w_idx)
-            elif w.slot < len(ctx.slots):
+            elif w.slot < len(ctx.slots) - 1:
                 ctx.slots[w.slot].discard(w_idx)
                 w.slot += 1
                 ctx.slots[w.slot].add(w_idx)
@@ -899,6 +920,7 @@ def import_words(ctx):
         Word.scrape(word, ctx, data=data)
 
 def main():
+    clear()
     ctx = Context()
     try: 
         ctx.read_from_file("flashcards")
@@ -926,13 +948,19 @@ def main():
             print("Saving changes...")
             ctx.write_to_file("flashcards")
         elif choice == "export":
+            clear()
             print("Exporting words to file words.json...")
             export_words(ctx)
+            continue
         elif choice == "import":
+            clear()
             print("Importing words from words.json...")
             import_words(ctx)
+            continue
         else:
             print(f"Error: invalid action {choice}")
+            continue
+        clear()
     if not abort:
         ctx.write_to_file("flashcards")
     
