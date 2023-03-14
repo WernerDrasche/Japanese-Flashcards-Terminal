@@ -37,6 +37,15 @@ def is_kana(char):
             return True
     return False
 
+LATIN_THRESHOLD = 0x036F
+
+def filter_kanji(s):
+    kanjis = []
+    for char in s:
+        if ord(char) > LATIN_THRESHOLD:
+            kanjis.append(char)
+    return kanjis
+
 def prompt():
     while True:
         choice = input("([y]es/[n]o): ").strip().lower()
@@ -146,6 +155,15 @@ class Kanji:
         self.parts = parts
         self.radical = radical
 
+    def scrape_radical_helper(radical, ctx):
+        k_idx = ctx.kanji_idx_by_symbol.get(radical)
+        if k_idx is None:
+            k_idx = Kanji.scrape(radical, ctx)
+        if k_idx == -1:
+            ctx.kanji_idx_by_symbol[radical] = -1
+            return -1
+        return k_idx
+
     # this does not prevent duplicates
     def scrape(char, ctx):
         print(f"Adding kanji {char}")
@@ -188,12 +206,8 @@ class Kanji:
         for radical in radicals:
             if radical == char:
                 continue
-            k_idx = ctx.kanji_idx_by_symbol.get(radical)
-            if k_idx is None:
-                k_idx = Kanji.scrape(radical, ctx)
-            if k_idx == -1:
-                ctx.kanji_idx_by_symbol[radical] = -1
-            else:
+            k_idx = Kanji.scrape_radical_helper(radical, ctx)
+            if k_idx != -1:
                 parts.append(k_idx)
         trimmed = parts.copy()
         for k_idx_o in parts:
@@ -203,16 +217,23 @@ class Kanji:
                     trimmed.remove(k_idx_o)
                     break
         parts = trimmed
-        radical = re.sub("\(.*\)", "", radical_info[0].text).strip()[-1]
-        k = Kanji(char, meanings, categories, parts, radical)
+        radicals = filter_kanji(radical_info[0].text)
         idx = len(ctx.kanjis)
+        for k_idx in parts:
+            k = ctx.kanjis[k_idx]
+            if k.char in radicals:
+                radical = k.char
+                break
+        else:
+            radical = re.sub("\(.*\)", "", radical_info[0].text).strip()[-1]
+        k = Kanji(char, meanings, categories, parts, radical)
         ctx.kanjis.append(k)
         ctx.kanji_idx_by_symbol[char] = idx
         return idx
 
-    def display_with_meaning(self, radical_ctl=False):
+    def display_with_meaning(self, radical=None):
         meanings = ", ".join(self.meanings)
-        is_radical = " (radical)" if radical_ctl and self.char == self.radical else ""
+        is_radical = " (radical)" if self.char == radical else ""
         print(f"{self.char}{is_radical}: {meanings}")
 
     def display_categories(self):
@@ -231,7 +252,7 @@ class Kanji:
     def display_parts(self, ctx):
         for k_idx in self.parts:
             k = ctx.kanjis[k_idx]
-            k.display_with_meaning(k.char == self.radical)
+            k.display_with_meaning(radical=self.radical)
 
 class Word:
     # does not prevent duplicates
@@ -395,13 +416,14 @@ class Word:
         print("Meaning:")
         for meaning in self.meanings:
             print(f"• {meaning}")
-        is_single_kanji_word = len(self.kanji_index) == 1
+        is_single = len(self.kanji_index) == 1
         if len(self.kanji_index) != 0:
+            radical = ctx.kanjis[self.kanji_index[0]].radical if is_single else None
             print("Kanji:")
             for k_idx in self.kanji_index:
                 k = ctx.kanjis[k_idx]
-                k.display_with_meaning(radical_ctl=is_single_kanji_word)
-        if is_single_kanji_word:
+                k.display_with_meaning(radical=radical)
+        if is_single:
             k = ctx.kanjis[self.kanji_index[0]]
             if k.parts:
                 print("Parts:")
@@ -923,7 +945,7 @@ def main():
     try: 
         ctx.read_from_file(DB_FILE)
     except Exception as e: 
-        print("Warning: could not read from {DB_FILE}.db")
+        print(f"Warning: could not read from {DB_FILE}.db")
         print("Warning: if you don't want to lose everything when exiting, kill the program")
         ctx.init_empty()
     abort = False
@@ -949,12 +971,12 @@ def main():
             continue
         elif choice == "export":
             clear()
-            print("Exporting words to file {WORDS_FILE}...")
+            print(f"Exporting words to file {WORDS_FILE}...")
             export_words(ctx)
             continue
         elif choice == "import":
             clear()
-            print("Importing words from {WORDS_FILE}...")
+            print(f"Importing words from {WORDS_FILE}...")
             import_words(ctx)
             continue
         else:
