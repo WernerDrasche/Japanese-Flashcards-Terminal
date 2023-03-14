@@ -5,6 +5,7 @@ Features (not in anki):
 - automatic scraping of meaning, furigana and word lists from jisho.org
 - kanji meanings for every kanji in word are shown when flipped
 - for every new kanji in word, a single kanji word will be added with this particular kanji
+- when single kanji word is flipped, topmost parts of kanji are shown
 - easy creation and management of word lists 
 - will probably scale very badly because python
 
@@ -26,9 +27,11 @@ Actions:
 - [l]ist: manage word lists
 - [e]dit
 - [r]eview
-- write: save changes
-- exit: exit and save
+- write: save changes to flashcards.db
+- exit: exit and save to flashcards.db
 - abort: exit without saving
+- export: export words to words.json
+- import: import words from words.json (already added words will be ignored)
 
 Add:
 - input the word to add and follow prompts

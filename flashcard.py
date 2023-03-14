@@ -1,16 +1,18 @@
 import requests
 from bs4 import BeautifulSoup
-import regex as re
 import sys
 import shelve
 import random
 import os
 import json
 from holelist import HoleList
+import re
 
 BASE_URL = "https://jisho.org/search/"
 SEARCH_DEPTH = 3
 EDITOR = "nvim"
+DB_FILE = "flashcards"
+WORDS_FILE = "words.json"
 
 def clear():
     if os.name == "nt":
@@ -21,11 +23,6 @@ def clear():
 def split_and_strip(s, at):
     words = [e.strip() for e in s.split(at)]
     return list(filter(None, words))
-
-#KANA = re.compile(r"([\p{IsHira}\p{isKatakana}]+)", re.UNICODE)
-#
-#def is_kana(char):
-#    return bool(KANA.match(char))
 
 PUNCTUATION = (0x3000, 0x303F)
 HIRAGANA = (0x3040, 0x309F)
@@ -453,7 +450,7 @@ def add_word_manual(word, ctx):
             print("Do you want to adjust the data?")
             if prompt():
                 continue
-            return
+            return -1
         break
     data = {word: w_data}
     return Word.scrape(word, ctx, data=data)
@@ -470,6 +467,7 @@ def add_words(ctx):
         if word == 'e' or word == "edit":
             if sel:
                 edit_words(ctx, sel=sel, idx=idx)
+            clear()
             continue
         if word == 'm' or word == "manual":
             if manual:
@@ -820,7 +818,7 @@ def select_words(ctx):
     return words
 
 def review_words(ctx):
-    with shelve.open("flashcards") as db:
+    with shelve.open(DB_FILE) as db:
         incorrect = db.get("incorrect")
         if incorrect is None:
             ctx.invalid.clear()
@@ -848,7 +846,7 @@ def review_words(ctx):
             print(w.word)
             usr = input("[Check] ").strip().lower()
             if usr == 'b' or usr == "back":
-                with shelve.open("flashcards") as db:
+                with shelve.open(DB_FILE) as db:
                     db["incorrect"] = incorrect
                     db["correct"] = correct
                     db["stash"] = stash
@@ -888,7 +886,7 @@ def review_words(ctx):
                 w.slot += 1
                 ctx.slots[w.slot].add(w_idx)
     ctx.invalid.clear()
-    with shelve.open("flashcards") as db:
+    with shelve.open(DB_FILE) as db:
         db["incorrect"] = None
         db["correct"] = None
         db["stash"] = None
@@ -903,15 +901,15 @@ def export_words(ctx):
         level = level[0] + 1 if level else 0
         w_data["level"] = "JLPT n" + str(level) if level else ""
         data[w.word] = w_data
-    with open("words.json", "w+") as f:
+    with open(WORDS_FILE, "w+") as f:
         json.dump(data, f)
 
 def import_words(ctx):
     try:
-        with open("words.json", "r") as f:
+        with open(WORDS_FILE, "r") as f:
             data = json.load(f)
     except:
-        print("Error: could not open words.json")
+        print("Error: could not open {WORDS_FILE}")
     for word, w_data in data.items():
         w_idx = ctx.word_idx_by_symbols.get(word)
         if w_idx is not None:
@@ -923,9 +921,9 @@ def main():
     clear()
     ctx = Context()
     try: 
-        ctx.read_from_file("flashcards")
+        ctx.read_from_file(DB_FILE)
     except Exception as e: 
-        print("Warning: could not read from flashcards.db")
+        print("Warning: could not read from {DB_FILE}.db")
         print("Warning: if you don't want to lose everything when exiting, kill the program")
         ctx.init_empty()
     abort = False
@@ -945,16 +943,18 @@ def main():
             abort = True
             break
         elif choice == "write":
+            clear()
             print("Saving changes...")
-            ctx.write_to_file("flashcards")
+            ctx.write_to_file(DB_FILE)
+            continue
         elif choice == "export":
             clear()
-            print("Exporting words to file words.json...")
+            print("Exporting words to file {WORDS_FILE}...")
             export_words(ctx)
             continue
         elif choice == "import":
             clear()
-            print("Importing words from words.json...")
+            print("Importing words from {WORDS_FILE}...")
             import_words(ctx)
             continue
         else:
@@ -962,7 +962,7 @@ def main():
             continue
         clear()
     if not abort:
-        ctx.write_to_file("flashcards")
+        ctx.write_to_file(DB_FILE)
     
 if __name__ == "__main__":
     main()
