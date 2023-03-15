@@ -140,13 +140,6 @@ class Context:
             self.slots = ctx.slots
             self.invalid = ctx.invalid
 
-ENDLESS_RADICAL_PAIRS = {
-        '口': '囗',
-        '囗': '口',
-        '母': '毋',
-        '毋': '母',
-        }
-
 class Kanji:
     def __init__(self, char, meanings, categories, parts, radical):
         self.char = char
@@ -155,17 +148,31 @@ class Kanji:
         self.parts = parts
         self.radical = radical
 
-    def scrape_radical_helper(radical, ctx):
+    def scrape_radical_helper(radical, trim_stack, ctx):
         k_idx = ctx.kanji_idx_by_symbol.get(radical)
         if k_idx is None:
-            k_idx = Kanji.scrape(radical, ctx)
+            k_idx = Kanji.scrape(radical, trim_stack, ctx)
         if k_idx == -1:
             ctx.kanji_idx_by_symbol[radical] = -1
             return -1
         return k_idx
 
+    def trim_parts(trim_stack, ctx):
+        while trim_stack:
+            k_idx = trim_stack.pop()
+            k = ctx.kanjis[k_idx]
+            parts = k.parts
+            trimmed = parts.copy()
+            for k_idx_o in parts:
+                for k_idx_i in parts:
+                    k_i = ctx.kanjis[k_idx_i]
+                    if k_idx_o in k_i.parts:
+                        trimmed.remove(k_idx_o)
+                        break
+            k.parts = trimmed
+
     # this does not prevent duplicates
-    def scrape(char, ctx):
+    def scrape(char, trim_stack, ctx):
         print(f"Adding kanji {char}")
         response = requests.get(BASE_URL + char + "%23kanji")
         if response.status_code != 200:
@@ -200,38 +207,34 @@ class Kanji:
             categories.add(OTHER)
         radical_info = parsed.body.find_all("div", attrs={"class": "radicals"})
         radicals = list(map(BeautifulSoup.get_text, radical_info[1].find_all("a")))
-        if char in ENDLESS_RADICAL_PAIRS:
-            radicals.remove(ENDLESS_RADICAL_PAIRS[char])
+        idx = len(ctx.kanjis)
+        ctx.kanjis.append(Kanji(char, None, None, None, None))
+        ctx.kanji_idx_by_symbol[char] = idx
+        trim_stack.append(idx)
         parts = []
         for radical in radicals:
             if radical == char:
                 continue
-            k_idx = Kanji.scrape_radical_helper(radical, ctx)
+            k_idx = Kanji.scrape_radical_helper(radical, trim_stack, ctx)
             if k_idx != -1:
                 parts.append(k_idx)
-        trimmed = parts.copy()
-        for k_idx_o in parts:
-            for k_idx_i in parts:
-                k_i = ctx.kanjis[k_idx_i]
-                if k_idx_o in k_i.parts:
-                    trimmed.remove(k_idx_o)
-                    break
-        parts = trimmed
         radicals = filter_kanji(radical_info[0].text)
-        idx = len(ctx.kanjis)
         for k_idx in parts:
             k = ctx.kanjis[k_idx]
             if k.char in radicals:
-                radical = k.char
+                radical = k_idx
                 break
         else:
             radical = re.sub("\(.*\)", "", radical_info[0].text).strip()[-1]
+            if radical != char:
+                radical = Kanji.scrape_radical_helper(radical, trim_stack, ctx)
+            else:
+                radical = idx
         k = Kanji(char, meanings, categories, parts, radical)
-        ctx.kanjis.append(k)
-        ctx.kanji_idx_by_symbol[char] = idx
+        ctx.kanjis[idx] = k
         return idx
 
-    def display_with_meaning(self, radical=None):
+    def display_with_meaning(self, radical):
         meanings = ", ".join(self.meanings)
         is_radical = " (radical)" if self.char == radical else ""
         print(f"{self.char}{is_radical}: {meanings}")
@@ -250,9 +253,13 @@ class Kanji:
         print(", ".join(cat_names))
 
     def display_parts(self, ctx):
+        r = ctx.kanjis[self.radical]
+        radical = r.char
+        if self.radical not in self.parts:
+            r.display_with_meaning(radical)
         for k_idx in self.parts:
             k = ctx.kanjis[k_idx]
-            k.display_with_meaning(radical=self.radical)
+            k.display_with_meaning(radical)
 
 class Word:
     # does not prevent duplicates
@@ -356,13 +363,20 @@ class Word:
             if not is_kana(char):
                 k_idx = ctx.kanji_idx_by_symbol.get(char)
                 if k_idx is None: 
-                    k_idx = Kanji.scrape(char, ctx)
+                    trim_stack = []
+                    k_idx = Kanji.scrape(char, trim_stack, ctx)
+                    Kanji.trim_parts(trim_stack, ctx)
                     if k_idx == -1:
                         return -1
                 w.kanji_index.append(k_idx)
         idx = ctx.words.add(w)
         ctx.word_idx_by_symbols[word] = idx
-        ctx.slots[0].add(idx)
+        if w_data and "slot" in w_data:
+            slot = w_data["slot"]
+            w.slot = slot
+        else:
+            slot = 0
+        ctx.slots[slot].add(idx)
         if not w_data:
             jlpt = result.find("span", attrs={"class": "concept_light-tag label"})
         else:
@@ -418,11 +432,12 @@ class Word:
             print(f"• {meaning}")
         is_single = len(self.kanji_index) == 1
         if len(self.kanji_index) != 0:
-            radical = ctx.kanjis[self.kanji_index[0]].radical if is_single else None
+            radical = ctx.kanjis[self.kanji_index[0]].radical
+            radical = ctx.kanjis[radical].char if is_single else None
             print("Kanji:")
             for k_idx in self.kanji_index:
                 k = ctx.kanjis[k_idx]
-                k.display_with_meaning(radical=radical)
+                k.display_with_meaning(radical)
         if is_single:
             k = ctx.kanjis[self.kanji_index[0]]
             if k.parts:
@@ -922,6 +937,7 @@ def export_words(ctx):
         level = list(filter(lambda l: l < NUM_RESERVED_WORD_LISTS, w.word_lists))
         level = level[0] + 1 if level else 0
         w_data["level"] = "JLPT n" + str(level) if level else ""
+        w_data["slot"] = w.slot
         data[w.word] = w_data
     with open(WORDS_FILE, "w+") as f:
         json.dump(data, f)
