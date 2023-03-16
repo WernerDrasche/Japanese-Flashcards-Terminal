@@ -9,7 +9,7 @@ from holelist import HoleList
 import re
 
 BASE_URL = "https://jisho.org/search/"
-SEARCH_DEPTH = 3
+SEARCH_DEPTH = 5
 EDITOR = "nvim"
 DB_FILE = "flashcards"
 WORDS_FILE = "words.json"
@@ -255,7 +255,7 @@ class Kanji:
     def display_parts(self, ctx):
         r = ctx.kanjis[self.radical]
         radical = r.char
-        if self.radical not in self.parts:
+        if self.radical not in self.parts and radical != self.char:
             r.display_with_meaning(radical)
         for k_idx in self.parts:
             k = ctx.kanjis[k_idx]
@@ -314,17 +314,30 @@ class Word:
             if not results:
                 print(f"Error: invalid word {word}")
                 return -1
+            if parsed.body.find("div", attrs={"id": "no-matches"}):
+                print(f"Error: no matches for word {word}")
+                return -1
             for i in range(min(SEARCH_DEPTH, len(results))):
                 result = results[i]
                 text = result.find("span", attrs={"class": "text"}).text.strip()
+                kanji_positions = []
+                for i in range(len(text)):
+                    char = text[i]
+                    if not is_kana(char):
+                        kanji_positions.append(i)
+                if single_kanji and len(kanji_positions) != 1:
+                    continue
                 if not exact_match or text == word:
                     break
             else:
-                print(f"Error: could not find exact match for {word}")
-                print("Do you want to input it manually?")
-                if prompt():
-                    return add_word_manual(word, ctx)
-                return -1
+                if exact_match:
+                    print(f"Error: could not find exact match for {word}")
+                    print("Do you want to input it manually?")
+                    if prompt():
+                        return add_word_manual(word, ctx)
+                    return -1
+                elif single_kanji:
+                    print(f"Error: could not find single kanji word for {word}")
             furigana = result.find("span", attrs={"class": "furigana"})
             singles = furigana.find("rt")
             if singles:
@@ -335,13 +348,6 @@ class Word:
             word = text
         else:
             furigana = w_data["furigana"]
-        kanji_positions = []
-        for i in range(len(word)):
-            char = word[i]
-            if not is_kana(char):
-                kanji_positions.append(i)
-        if single_kanji and len(kanji_positions) != 1:
-            return -1
         w = Word(word, furigana)
         w.display("Adding @")
 #       if exact_match:
@@ -401,8 +407,7 @@ class Word:
                     if l < m[1]:
                         m = (c, l)
                 for y in ctx.single_kanji_word_lists[m[0]]:
-                    w = ctx.words[y]
-                    if i == w.kanji_index[0]:
+                    if i == ctx.words[y].kanji_index[0]:
                         break
                 else:
                     Word.scrape(
@@ -442,13 +447,14 @@ class Word:
             k = ctx.kanjis[self.kanji_index[0]]
             if k.parts:
                 print("Parts:")
-            k.display_parts(ctx)
+                k.display_parts(ctx)
             if OTHER not in k.categories:
                 print("Categories: ", end="")
                 k.display_categories()
         if len(self.word_lists) != 0:
             print("Word lists: ", end="")
             self.display_word_lists(ctx)
+
 
 def json_to_word_data(j, ctx):
     w_data = {}
