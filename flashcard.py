@@ -298,6 +298,14 @@ class Word:
         if diff > 0:
             self.lower += ' ' * diff * 2
 
+    def calculate_kanji_positions(word):
+        kanji_positions = []
+        for i in range(len(word)):
+            char = word[i]
+            if not is_kana(char):
+                kanji_positions.append(i)
+        return kanji_positions
+
     def scrape(word, ctx, exact_match=True, single_kanji=False, data=None):
         w_data = None
         if data:
@@ -319,12 +327,12 @@ class Word:
                 return -1
             for i in range(min(SEARCH_DEPTH, len(results))):
                 result = results[i]
-                text = result.find("span", attrs={"class": "text"}).text.strip()
-                kanji_positions = []
-                for i in range(len(text)):
-                    char = text[i]
-                    if not is_kana(char):
-                        kanji_positions.append(i)
+                text_container = result.find("span", attrs={"class": "text"})
+                if text_container:
+                    text = text_container.text.strip()
+                else:
+                    continue
+                kanji_positions = Word.calculate_kanji_positions(text)
                 if single_kanji and len(kanji_positions) != 1:
                     continue
                 if not exact_match or text == word:
@@ -338,6 +346,11 @@ class Word:
                     return -1
                 elif single_kanji:
                     print(f"Error: could not find single kanji word for {word}")
+                    return -1
+            if not exact_match and text != word:
+                k_idx = ctx.word_idx_by_symbols.get(text)
+                if k_idx is not None:
+                    return -1
             furigana = result.find("span", attrs={"class": "furigana"})
             singles = furigana.find("rt")
             if singles:
@@ -347,6 +360,7 @@ class Word:
                     map(BeautifulSoup.get_text, furigana)))
             word = text
         else:
+            kanji_positions = Word.calculate_kanji_positions(word)
             furigana = w_data["furigana"]
         w = Word(word, furigana)
         w.display("Adding @")
