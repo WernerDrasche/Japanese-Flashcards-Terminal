@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Select Wordlists</h1>
+<form method="post" action={{ url_for("select") }}>
+    {% for l in word_lists %}
+    {% if l[0] %}
+    <div>
+        <input type="checkbox" name="{{ l[0] }}">
+        <label>{{ l[1] }}</label>
+    </div>
+    {% else %}
+    <p>{{ l[1] }}</p>
+    {% endif %}
+    {% endfor %}
+    <div>
+        <p>
+        <input type="number" name="number" value="100" min="1"/>
+        <input type="submit" name="submit" value="Select"/>
+        </p>
+    </div>
+    {% with messages = get_flashed_messages() %}
+    {% if messages %}
+    <div>
+        <p>{{ messages[0] }}</p>
+    </div>
+    {% endif %}
+    {% endwith %}
+</form>
+<p style="margin-top:1cm;"></p>
+<form action="{{ url_for('leave') }}">
+    <button type="submit">Abort</button>
+</form>
+{% endblock %}

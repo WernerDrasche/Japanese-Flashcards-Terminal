@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<p style="white-space:pre-wrap;">{{ back }}</p>
+<p>Were you able to answer?</p>
+<form action="{{ url_for('view_back') }}" method="post">
+    <button type="submit" name="submit" value="yes">Yes</button>
+    <button type="submit" name="submit" value="no" style="margin: auto 1cm;">No</button>
+</form>
+<p style="margin-top:1cm;"></p>
+<form action="{{ url_for('leave') }}">
+    <button type="submit">Abort</button>
+</form>
+{% endblock %}
+

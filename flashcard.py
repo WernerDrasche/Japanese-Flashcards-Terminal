@@ -122,6 +122,7 @@ class Context:
         self.single_kanji_word_lists = tuple([set() for _ in range(14)])
         self.slots = tuple([set() for _ in range(6)])
         self.invalid = set()
+        self.no_single_kanji_word_cache = set()
 
     def write_to_file(self, path):
         with shelve.open(path) as db:
@@ -139,6 +140,7 @@ class Context:
             self.single_kanji_word_lists = ctx.single_kanji_word_lists
             self.slots = ctx.slots
             self.invalid = ctx.invalid
+            self.no_single_kanji_word_cache = ctx.no_single_kanji_word_cache
 
 class Kanji:
     def __init__(self, char, meanings, categories, parts, radical):
@@ -346,10 +348,11 @@ class Word:
                     return -1
                 elif single_kanji:
                     print(f"Error: could not find single kanji word for {word}")
+                    ctx.no_single_kanji_word_cache.add(word[0])
                     return -1
             if not exact_match and text != word:
                 k_idx = ctx.word_idx_by_symbols.get(text)
-                if k_idx is not None:
+                if (k_idx is not None) or (data and data.get(text)):
                     return -1
             furigana = result.find("span", attrs={"class": "furigana"})
             singles = furigana.find("rt")
@@ -424,12 +427,14 @@ class Word:
                     if i == ctx.words[y].kanji_index[0]:
                         break
                 else:
-                    Word.scrape(
-                            ctx.kanjis[i].char,
-                            ctx,
-                            exact_match=False,
-                            single_kanji=True,
-                            data=data)
+                    k_char = ctx.kanjis[i].char
+                    if k_char not in ctx.no_single_kanji_word_cache:
+                        Word.scrape(
+                                k_char,
+                                ctx,
+                                exact_match=False,
+                                single_kanji=True,
+                                data=data)
         return idx
 
     def display(self, surrounding="@"):

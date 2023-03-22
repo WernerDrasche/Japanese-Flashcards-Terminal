@@ -1,0 +1,14 @@
+.container {
+    font-size: 50px;
+    width: max-content;
+    margin: 1cm auto;
+}
+
+input, button {
+    font-size: 50px;
+}
+
+input[type=checkbox] {
+    transform: scale(2.5);
+    margin: 0 10px;
+}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Japanese Flashcards</h1>
+<form action="{{ url_for('select') }}">
+    <button type="submit">Start</button>
+</form>
+<form action="{{ url_for('exit') }}">
+    <button type="submit">Exit</button>
+</form>
+<p style="margin-top:1cm;"></p>
+<form action="{{ url_for('leave') }}">
+    <button type="submit">Abort</button>
+{% endblock %}
+

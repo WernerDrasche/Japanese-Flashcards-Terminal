@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<p>{{ front }}</p>
+<form action="{{ url_for('view_back') }}">
+    <button type="submit">Flip</button>
+</form>
+<p style="margin-top:1cm;"></p>
+<form action="{{ url_for('leave') }}">
+    <button type="submit">Abort</button>
+</form>
+{% endblock %}
+
