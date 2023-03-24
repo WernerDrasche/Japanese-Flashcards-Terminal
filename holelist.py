@@ -10,12 +10,11 @@ class HoleList(UserList):
             raise ValueError("slice indexing not supported")
         self.data[i] = None
         if i == len(self.data) - 1:
-            for y in range(i, -2, -1):
-                if self.data[y] or y == -1:
-                    del self.data[y+1:]
-                    for l in range(len(self.free)):
-                        if self.free[l] > y:
-                            del self.free[l]
+            for y in range(i, -1, -1):
+                if self.data[y]:
+                    break
+                del self.data[y]
+            self.free = [f for f in self.free if f < y]
         else:
             self.free.append(i)
 
@@ -39,10 +38,19 @@ class HoleList(UserList):
         return i
 
 if __name__ == "__main__":
-    x = HoleList()
-    x.add(1)
+    x = HoleList([1,2,3,4,5,6])
+    del x[1]
+    del x[3]
+    del x[4]
+    print(x.data, x.free)
+    del x[5]
+    print(x.data, x.free)
+    x.add(2)
+    print(x.data, x.free)
+    del x[2]
+    print(x.data, x.free)
     del x[0]
-    print(x)
-    i = x.add(2)
-    print(i)
-    print(x)
+    print(x.data, x.free)
+    del x[1]
+    print(x.data, x.free)
+    x.add(1)

@@ -357,7 +357,7 @@ class Word:
             furigana = result.find("span", attrs={"class": "furigana"})
             singles = furigana.find("rt")
             if singles:
-                furigana = list(singles.text)
+                furigana = [singles.text]
             else:
                 furigana = list(filter(lambda s: not s.isspace() and s,
                     map(BeautifulSoup.get_text, furigana)))
