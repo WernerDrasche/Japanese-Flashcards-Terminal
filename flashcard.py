@@ -8,8 +8,16 @@ import json
 from holelist import HoleList
 import re
 
+auto_add_word_lists = []
+
+def display_auto_add_info(ctx):
+    if not auto_add_word_lists: return
+    print("[info] new words will be automatically added to: ", end="")
+    names = [ctx.word_list_names[n_idx] for n_idx in auto_add_word_lists]
+    print(", ".join(names))
+
 BASE_URL = "https://jisho.org/search/"
-SEARCH_DEPTH = 5
+SEARCH_DEPTH = 10
 EDITOR = "nvim"
 DB_FILE = "flashcards"
 WORDS_FILE = "words.json"
@@ -46,13 +54,16 @@ def filter_kanji(s):
             kanjis.append(char)
     return kanjis
 
-def prompt():
+def prompt(other=None):
     while True:
         choice = input("([y]es/[n]o): ").strip().lower()
         if choice == 'y' or choice == "yes" or choice == "はい": 
             return True
         elif choice == 'n' or choice == "no" or choice == "いええ":
             return False
+        for option in other:
+            if choice in option:
+                return option[0]
 
 def choose_options(lst, msg="Choose options", empty_is_first=True, output=True):
     n = len(lst)
@@ -123,6 +134,9 @@ class Context:
         self.slots = tuple([set() for _ in range(6)])
         self.invalid = set()
         self.no_single_kanji_word_cache = set()
+        self.correct = []
+        self.incorrect = []
+        self.stash = []
 
     def write_to_file(self, path):
         with shelve.open(path) as db:
@@ -141,6 +155,9 @@ class Context:
             self.slots = ctx.slots
             self.invalid = ctx.invalid
             self.no_single_kanji_word_cache = ctx.no_single_kanji_word_cache
+            self.correct = ctx.correct
+            self.incorrect = ctx.incorrect
+            self.stash = ctx.stash
 
 class Kanji:
     def __init__(self, char, meanings, categories, parts, radical):
@@ -411,6 +428,10 @@ class Word:
                 level = jlpt[-1]
                 ctx.word_lists["jlpt n" + level].add(idx)
                 w.word_lists.add(int(level) - 1)
+        for n_idx in auto_add_word_lists:
+            w.word_lists.add(n_idx)
+            name = ctx.word_list_names[n_idx]
+            ctx.word_lists[name].add(idx)
         if len(w.kanji_index) == 1:
             k = ctx.kanjis[w.kanji_index[0]]
             for c in k.categories:
@@ -523,6 +544,7 @@ def add_words(ctx):
     idx = -1
     clear()
     while True:
+        display_auto_add_info(ctx)
         word = input("Add: ").strip().lower()
         if word == 'b' or word == "back":
             break
@@ -566,8 +588,12 @@ def edit_word_lists(ctx):
             clear()
             print("Edit word lists:")
             names = list(ctx.word_list_names)[NUM_RESERVED_WORD_LISTS:]
-            for i in range(len(names)):
-                print(f"{i+1}. {names[i]}")
+            i = 0
+            for name in names:
+                n_idx = ctx.word_list_names.index(name)
+                auto = "[auto]" if n_idx in auto_add_word_lists else ""
+                print(f"{i+1}. {name} {auto}")
+                i += 1
             updated = False
         cmd = input("Command: ").strip().lower()
         if not cmd:
@@ -588,24 +614,28 @@ def edit_word_lists(ctx):
             continue
         action, n = parsed
         name = names[n]
+        n_idx = ctx.word_list_names.index(name)
         if action == 'r' or action == "rename":
             new_name = input(f"{name} -> ").strip()
             if new_name in ctx.word_lists:
                 print("Error: name collision with word list {new_name}")
                 continue
-            n_idx = ctx.word_list_names.index(name)
             ctx.word_list_names[n_idx] = new_name
             ctx.word_lists[new_name] = ctx.word_lists.pop(name)
         elif action == 'd' or action == "delete":
             print(f"Are you sure, that you want to delete word list {name}?")
             if not prompt():
                 continue
-            n_idx = ctx.word_list_names.index(name)
             for w_idx in ctx.word_lists[name]:
                 w = ctx.words[w_idx]
                 w.word_lists.discard(n_idx)
             del ctx.word_lists[name]
             del ctx.word_list_names[n_idx]
+        elif action == "auto":
+            if n_idx in auto_add_word_lists:
+                auto_add_word_lists.remove(n_idx)
+            else:
+                auto_add_word_lists.append(n_idx)
         updated = True
 
 def choose_word_lists_wrapper(names):
@@ -880,16 +910,15 @@ def select_words(ctx):
     return words
 
 def review_words(ctx):
-    with shelve.open(DB_FILE) as db:
-        incorrect = db.get("incorrect")
-        if incorrect is None:
-            ctx.invalid.clear()
-            word_list = select_words(ctx)
-            if not word_list:
-                return
-            incorrect = [[w_idx, 0] for w_idx in word_list]
-        correct = db.get("correct") or []
-        stash = db.get("stash") or []
+    incorrect = ctx.incorrect
+    if not incorrect:
+        ctx.invalid.clear()
+        word_list = select_words(ctx)
+        if not word_list:
+            return
+        incorrect = [[w_idx, 0] for w_idx in word_list]
+    correct = ctx.correct
+    stash = ctx.stash
     abort = False
     while True:
         while incorrect or stash:
@@ -908,23 +937,38 @@ def review_words(ctx):
             print(w.word)
             usr = input("[Check] ").strip().lower()
             if usr == 'b' or usr == "back":
-                with shelve.open(DB_FILE) as db:
-                    db["incorrect"] = incorrect
-                    db["correct"] = correct
-                    db["stash"] = stash
+                ctx.correct = correct
+                ctx.incorrect = incorrect
+                ctx.stash = stash
                 return
             elif usr == 'a' or usr == "abort":
                 abort = True
                 break
-            clear()
-            w.display_full(ctx)
             del incorrect[c_idx]
-            print("Were you able to answer?")
-            if prompt():
-                correct.append(card)
-            else:
-                card[1] += 1
-                stash.append(card)
+            err = 0
+            while True:
+                if not err: clear()
+                else: print()
+                err = 0
+                w.display_full(ctx)
+                print("Were you able to answer?")
+                cmd = prompt([("e", "edit"), ("a", "add"), ("r", "remove")])
+                if cmd == "e":
+                    edit_words(ctx, sel=w, idx=w_idx)
+                    if w_idx in ctx.invalid:
+                        ctx.invalid.discard(w_idx)
+                        break
+                elif cmd == "a":
+                    err = add_to_word_lists(w, w_idx, ctx)
+                elif cmd == "r":
+                    err = remove_from_word_lists(w, w_idx, ctx)
+                elif cmd:
+                    correct.append(card)
+                    break
+                else:
+                    card[1] += 1
+                    stash.append(card)
+                    break
         if abort:
             break
         print("Repeat with same deck?")
@@ -938,20 +982,28 @@ def review_words(ctx):
                 continue
             w_idx = card[0]
             w = ctx.words[w_idx]
-            if wrong >= 2:
+            #if wrong >= 2:
+            #    if w.slot > 0:
+            #        ctx.slots[w.slot].discard(w_idx)
+            #        w.slot = max(w.slot - wrong + 1, 0)
+            #        ctx.slots[w.slot].add(w_idx)
+            #elif w.slot < len(ctx.slots) - 1:
+            #    ctx.slots[w.slot].discard(w_idx)
+            #    w.slot += 1
+            #    ctx.slots[w.slot].add(w_idx)
+            if wrong > 0:
                 if w.slot > 0:
                     ctx.slots[w.slot].discard(w_idx)
-                    w.slot -= 1
-                    ctx.slots[w.slot].add(w_idx)
+                    w.slot = 0
+                    ctx.slots[0].add(w_idx)
             elif w.slot < len(ctx.slots) - 1:
                 ctx.slots[w.slot].discard(w_idx)
                 w.slot += 1
                 ctx.slots[w.slot].add(w_idx)
     ctx.invalid.clear()
-    with shelve.open(DB_FILE) as db:
-        db["incorrect"] = None
-        db["correct"] = None
-        db["stash"] = None
+    ctx.correct = []
+    ctx.incorrect = []
+    ctx.stash = []
 
 def export_words(ctx):
     data = {}
@@ -991,6 +1043,7 @@ def main():
         ctx.init_empty()
     abort = False
     while True:
+        display_auto_add_info(ctx)
         choice = input("Action: ").strip().lower()
         if choice == 'a' or choice == "add":
             add_words(ctx)
